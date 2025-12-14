@@ -1,0 +1,3 @@
+﻿SimulStreaming will use Faster Whisper for the encoder.
+INFO:     172.17.0.1:57258 - "GET / HTTP/1.1" 200 OK
+Detected language: en with p=0.7624

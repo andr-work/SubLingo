@@ -3,7 +3,9 @@
   "version": "1.0.0",
   "main": "main.js",
   "scripts": {
-    "start": "electron ."
+    "start": "electron .",
+    "docker:build": "node docker-build.js",
+    "docker:run": "node docker-run.js"
   },
   "repository": "git@github.com:andr-work/SubLingo.git",
   "author": "andr-work <andr21work@gmail.com>",
