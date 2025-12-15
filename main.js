@@ -1,4 +1,4 @@
-const { app, BrowserWindow } = require('electron')
+const { app, BrowserWindow, session } = require('electron')
 const { spawn } = require('child_process')
 const { execSync } = require('child_process')
 const http = require('http')
@@ -37,13 +37,13 @@ const createMainWindow = () => {
     })
 
     mainWindow.loadFile('index.html')
-    
+
     // ローディングウィンドウを閉じる
     if (loadingWindow) {
         loadingWindow.close()
         loadingWindow = null
     }
-    
+
     return mainWindow
 }
 
@@ -52,7 +52,7 @@ const updateLoadingStatus = (message, status = '') => {
         loadingWindow.webContents.executeJavaScript(`
             document.getElementById('message').textContent = '${message}';
             document.getElementById('status').textContent = '${status}';
-        `).catch(() => {})
+        `).catch(() => { })
     }
 }
 
@@ -81,22 +81,22 @@ const startDocker = () => {
             resolve()
             return
         }
-        
+
         // 既に起動処理が実行されている場合は何もしない
         if (dockerStarted) {
             resolve()
             return
         }
-        
+
         dockerStarted = true
         updateLoadingStatus('Dockerコンテナを起動しています...', '')
-        
+
         const dockerRunScript = path.join(__dirname, 'docker-run.js')
         dockerProcess = spawn('node', [dockerRunScript, '--detached'], {
             detached: true,
             stdio: ['ignore', 'pipe', 'pipe']
         })
-        
+
         dockerProcess.stdout.on('data', (data) => {
             const message = data.toString().trim()
             console.log(`Docker: ${message}`)
@@ -104,11 +104,11 @@ const startDocker = () => {
                 updateLoadingStatus('Dockerコンテナが起動しました', '接続を確認中...')
             }
         })
-        
+
         dockerProcess.stderr.on('data', (data) => {
             console.error(`Docker Error: ${data.toString().trim()}`)
         })
-        
+
         dockerProcess.on('close', (code) => {
             if (code === 0) {
                 console.log('Docker container started in background')
@@ -118,7 +118,7 @@ const startDocker = () => {
                 reject(new Error(`Docker process exited with code ${code}`))
             }
         })
-        
+
         dockerProcess.unref()
     })
 }
@@ -127,15 +127,15 @@ const checkPort = (port, maxRetries = 120, delay = 2000) => {
     return new Promise((resolve, reject) => {
         let attempts = 0
         let resolved = false
-        
+
         const tryConnect = () => {
             if (resolved) return
-            
+
             attempts++
             if (attempts % 5 === 0 || attempts === 1) {
                 updateLoadingStatus('サーバーの起動を待っています...', `試行 ${attempts}/${maxRetries}`)
             }
-            
+
             let timeoutId = null
             const req = http.get(`http://localhost:${port}/`, { timeout: 3000 }, (res) => {
                 // リクエストが成功したらタイムアウトをクリア
@@ -143,7 +143,7 @@ const checkPort = (port, maxRetries = 120, delay = 2000) => {
                     clearTimeout(timeoutId)
                 }
                 req.destroy()
-                
+
                 // 200, 404, 405などはサーバーが起動していることを示す
                 if (res.statusCode >= 200 && res.statusCode < 500) {
                     resolved = true
@@ -157,15 +157,15 @@ const checkPort = (port, maxRetries = 120, delay = 2000) => {
                     }
                 }
             })
-            
+
             req.on('error', (error) => {
                 if (resolved) return
-                
+
                 // リクエストが失敗したらタイムアウトをクリア
                 if (timeoutId) {
                     clearTimeout(timeoutId)
                 }
-                
+
                 if (error.code === 'ECONNREFUSED' || error.code === 'ETIMEDOUT') {
                     // 接続拒否またはタイムアウトは、サーバーがまだ起動していないことを示す
                     if (attempts < maxRetries) {
@@ -182,7 +182,7 @@ const checkPort = (port, maxRetries = 120, delay = 2000) => {
                     }
                 }
             })
-            
+
             // タイムアウトハンドラ（リクエストが3秒以内に完了しない場合）
             timeoutId = setTimeout(() => {
                 if (!resolved) {
@@ -195,7 +195,7 @@ const checkPort = (port, maxRetries = 120, delay = 2000) => {
                 }
             }, 3000)
         }
-        
+
         tryConnect()
     })
 }
@@ -220,18 +220,29 @@ const checkContainerLogs = (containerName) => {
 }
 
 app.whenReady().then(async () => {
+    // マイク権限を許可
+    session.defaultSession.setPermissionRequestHandler(
+        (webContents, permission, callback) => {
+            if (permission === 'media') {
+                callback(true)
+            } else {
+                callback(false)
+            }
+        }
+    )
+
     // ローディングウィンドウを表示
     createLoadingWindow()
-    
+
     try {
         // Dockerコンテナを起動
         updateLoadingStatus('Dockerコンテナを起動しています...', '')
         await startDocker()
-        
+
         // コンテナが起動した後、少し待つ（アプリケーションの初期化時間）
         updateLoadingStatus('コンテナの初期化を待っています...', '')
         await new Promise(resolve => setTimeout(resolve, 3000))
-        
+
         // コンテナのログを確認（デバッグ用、通常はコメントアウト）
         // let containerName = 'wlk'
         // try {
@@ -248,21 +259,21 @@ app.whenReady().then(async () => {
         //     // エラーは無視
         // }
         // checkContainerLogs(containerName)
-        
+
         // ポート8000がリッスンしているか確認（最大4分待つ）
         updateLoadingStatus('サーバーの起動を待っています...', 'モデルのロードに時間がかかる場合があります')
         await checkPort(8000, 120, 2000) // 最大4分（120回 × 2秒）
-        
+
         // メインウィンドウを表示
         updateLoadingStatus('アプリを起動しています...', '')
         setTimeout(() => {
             createMainWindow()
         }, 500)
-        
+
     } catch (error) {
         console.error('Failed to start application:', error)
         updateLoadingStatus('エラーが発生しました', error.message)
-        
+
         // エラー時はログを確認（必要に応じてコメントアウトを解除）
         // let containerName = 'wlk'
         // try {
@@ -279,7 +290,7 @@ app.whenReady().then(async () => {
         //     // エラーは無視
         // }
         // const logs = checkContainerLogs(containerName)
-        
+
         // エラー時もメインウィンドウを表示（ユーザーが手動で再試行できるように）
         setTimeout(() => {
             createMainWindow()
@@ -293,7 +304,7 @@ const stopDockerContainers = () => {
         shell: true,
         windowsHide: true
     };
-    
+
     // 実行中のコンテナを確認して停止
     try {
         // wlkコンテナが実行中か確認
@@ -303,7 +314,7 @@ const stopDockerContainers = () => {
             shell: true,
             windowsHide: true
         }).trim();
-        
+
         if (wlkResult === 'wlk') {
             console.log('Stopping wlk container...');
             execSync('docker stop wlk', execOptions);
@@ -312,7 +323,7 @@ const stopDockerContainers = () => {
     } catch (error) {
         // コンテナが存在しない、または既に停止している場合は無視
     }
-    
+
     try {
         // wlk-cpuコンテナが実行中か確認
         const cpuResult = execSync('docker ps --filter "name=wlk-cpu" --format "{{.Names}}"', {
@@ -321,7 +332,7 @@ const stopDockerContainers = () => {
             shell: true,
             windowsHide: true
         }).trim();
-        
+
         if (cpuResult === 'wlk-cpu') {
             console.log('Stopping wlk-cpu container...');
             execSync('docker stop wlk-cpu', execOptions);
