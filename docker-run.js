@@ -28,7 +28,7 @@ function imageExists(imageName) {
 
 function containerExists(containerName) {
   try {
-    const result = execSync(`docker ps -a --filter "name=${containerName}" --format "{{.Names}}"`, { 
+    const result = execSync(`docker ps -a --filter "name=${containerName}" --format "{{.Names}}"`, {
       ...execOptions,
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'ignore']
@@ -41,7 +41,7 @@ function containerExists(containerName) {
 
 function containerIsRunning(containerName) {
   try {
-    const result = execSync(`docker ps --filter "name=${containerName}" --format "{{.Names}}"`, { 
+    const result = execSync(`docker ps --filter "name=${containerName}" --format "{{.Names}}"`, {
       ...execOptions,
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'ignore']
@@ -70,7 +70,7 @@ function waitForContainer(containerName, maxWaitTime = 30000) {
   return new Promise((resolve, reject) => {
     const checkInterval = setInterval(() => {
       try {
-        const result = execSync(`docker ps --filter "name=${containerName}" --format "{{.Names}}"`, { 
+        const result = execSync(`docker ps --filter "name=${containerName}" --format "{{.Names}}"`, {
           ...execOptions,
           encoding: 'utf8',
           stdio: ['ignore', 'pipe', 'ignore']
@@ -98,19 +98,35 @@ function runDocker(detached = false) {
   const containerName = hasGPU ? 'wlk' : 'wlk-cpu';
   const imageName = hasGPU ? 'wlk' : 'wlk:cpu';
   const dockerfile = hasGPU ? 'Dockerfile' : 'Dockerfile.cpu';
-  
+
   // 既にコンテナが起動している場合は何もしない
   if (containerIsRunning(containerName)) {
     console.log(`${containerName} container is already running.`);
     return;
   }
-  
-  // 既にコンテナが存在するが停止している場合は削除
+
+  // 既にコンテナが存在するが停止している場合は再開 (削除しない)
   if (containerExists(containerName)) {
-    console.log(`Removing existing ${containerName} container...`);
-    stopAndRemoveContainer(containerName);
+    console.log(`Resuming existing ${containerName} container...`);
+    try {
+      execSync(`docker start ${containerName}`, { ...execOptions, stdio: 'ignore' });
+
+      if (detached) {
+        waitForContainer(containerName).then(() => {
+          console.log(`${containerName} container is ready.`);
+        }).catch((error) => {
+          console.error(`Failed to start ${containerName}:`, error.message);
+        });
+      } else {
+        console.log(`${containerName} container started.`);
+      }
+      return; // 再利用したので終了
+    } catch (e) {
+      console.error("Failed to restart container, removing and recreating...", e);
+      stopAndRemoveContainer(containerName);
+    }
   }
-  
+
   if (hasGPU) {
     if (!imageExists('wlk')) {
       console.log('GPU image (wlk) not found. Building first...');
@@ -124,11 +140,26 @@ function runDocker(detached = false) {
     }
     console.log('No GPU detected. Running CPU version...');
   }
-  
-  const dockerRunCmd = hasGPU 
-    ? 'docker run -d --gpus all -p 8000:8000 --name wlk wlk'
-    : 'docker run -d -p 8000:8000 --name wlk-cpu wlk:cpu';
-  
+
+  // ホスト側のキャッシュディレクトリを準備
+  const homedir = require('os').homedir();
+  const path = require('path');
+  const fs = require('fs');
+  const cacheDir = path.join(homedir, 'wlk_cache');
+
+  if (!fs.existsSync(cacheDir)) {
+    try {
+      fs.mkdirSync(cacheDir, { recursive: true });
+      console.log(`Created cache directory: ${cacheDir}`);
+    } catch (e) {
+      console.error(`Failed to create cache directory: ${e.message}`);
+    }
+  }
+
+  const dockerRunCmd = hasGPU
+    ? `docker run -d --gpus all -p 8000:8000 -v "${cacheDir}:/root/.cache/huggingface/hub" --name wlk wlk`
+    : `docker run -d -p 8000:8000 -v "${cacheDir}:/root/.cache/huggingface/hub" --name wlk-cpu wlk:cpu`;
+
   if (detached) {
     execSync(dockerRunCmd, { ...execOptions, stdio: 'pipe' });
     console.log(`Starting ${containerName} container...`);

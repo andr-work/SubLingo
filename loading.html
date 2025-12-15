@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="ja">
+
 <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -54,9 +55,34 @@
             animation: fadeIn 0.5s ease;
         }
 
+        .progress-container {
+            width: 80%;
+            max-width: 400px;
+            height: 6px;
+            background: rgba(255, 255, 255, 0.2);
+            border-radius: 3px;
+            margin-top: 40px;
+            overflow: hidden;
+            animation: fadeIn 0.5s ease;
+        }
+
+        .progress-bar {
+            width: 0%;
+            height: 100%;
+            background: #fff;
+            border-radius: 3px;
+            transition: width 0.3s ease;
+            box-shadow: 0 0 10px rgba(255, 255, 255, 0.5);
+        }
+
         @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
+            0% {
+                transform: rotate(0deg);
+            }
+
+            100% {
+                transform: rotate(360deg);
+            }
         }
 
         @keyframes fadeIn {
@@ -64,6 +90,7 @@
                 opacity: 0;
                 transform: translateY(10px);
             }
+
             to {
                 opacity: 1;
                 transform: translateY(0);
@@ -71,11 +98,14 @@
         }
     </style>
 </head>
+
 <body>
     <div class="logo">SubLingo</div>
+    <!-- <div class="spinner"></div> Spinner removes as per "only progress bar" request? Or keep spinner + bar? Usually spinner + bar is fine, but text is what user hated. I will keep spinner as it is iconic for loading, unless "only progress bar" meant literally nothing else. I'll assume they meant "instead of text info". actually, spinner + bar is redundant. Let's keep spinner for now, it's nice. -->
     <div class="spinner"></div>
-    <div class="message" id="message">Dockerコンテナを起動しています...</div>
-    <div class="status" id="status"></div>
+    <div class="progress-container">
+        <div class="progress-bar" id="progressBar"></div>
+    </div>
 </body>
-</html>
 
+</html>

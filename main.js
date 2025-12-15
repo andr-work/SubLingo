@@ -1,4 +1,4 @@
-const { app, BrowserWindow, session } = require('electron')
+const { app, BrowserWindow, session, shell } = require('electron')
 const { spawn } = require('child_process')
 const { execSync } = require('child_process')
 const http = require('http')
@@ -38,6 +38,15 @@ const createMainWindow = () => {
 
     mainWindow.loadFile('index.html')
 
+    // Handle external links
+    mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+        if (url.startsWith('http:') || url.startsWith('https:')) {
+            shell.openExternal(url)
+            return { action: 'deny' }
+        }
+        return { action: 'allow' }
+    })
+
     // ローディングウィンドウを閉じる
     if (loadingWindow) {
         loadingWindow.close()
@@ -47,11 +56,10 @@ const createMainWindow = () => {
     return mainWindow
 }
 
-const updateLoadingStatus = (message, status = '') => {
+const updateLoadingStatus = (percentage) => {
     if (loadingWindow && !loadingWindow.isDestroyed()) {
         loadingWindow.webContents.executeJavaScript(`
-            document.getElementById('message').textContent = '${message}';
-            document.getElementById('status').textContent = '${status}';
+            document.getElementById('progressBar').style.width = '${percentage}%';
         `).catch(() => { })
     }
 }
@@ -77,7 +85,8 @@ const startDocker = () => {
         // 既にコンテナが起動している場合は何もしない
         if (checkContainerRunning()) {
             console.log('Docker container is already running')
-            updateLoadingStatus('Dockerコンテナは既に起動しています', '接続を確認中...')
+            console.log('Docker container is already running')
+            updateLoadingStatus(30)
             resolve()
             return
         }
@@ -89,7 +98,8 @@ const startDocker = () => {
         }
 
         dockerStarted = true
-        updateLoadingStatus('Dockerコンテナを起動しています...', '')
+        dockerStarted = true
+        updateLoadingStatus(10)
 
         const dockerRunScript = path.join(__dirname, 'docker-run.js')
         dockerProcess = spawn('node', [dockerRunScript, '--detached'], {
@@ -101,7 +111,7 @@ const startDocker = () => {
             const message = data.toString().trim()
             console.log(`Docker: ${message}`)
             if (message.includes('container is ready') || message.includes('Running')) {
-                updateLoadingStatus('Dockerコンテナが起動しました', '接続を確認中...')
+                updateLoadingStatus(30)
             }
         })
 
@@ -132,8 +142,11 @@ const checkPort = (port, maxRetries = 120, delay = 2000) => {
             if (resolved) return
 
             attempts++
+            attempts++
             if (attempts % 5 === 0 || attempts === 1) {
-                updateLoadingStatus('サーバーの起動を待っています...', `試行 ${attempts}/${maxRetries}`)
+                // 30% to 90% mapping
+                const progress = 30 + Math.min(60, (attempts / 60) * 60);
+                updateLoadingStatus(progress)
             }
 
             let timeoutId = null
@@ -147,7 +160,7 @@ const checkPort = (port, maxRetries = 120, delay = 2000) => {
                 // 200, 404, 405などはサーバーが起動していることを示す
                 if (res.statusCode >= 200 && res.statusCode < 500) {
                     resolved = true
-                    updateLoadingStatus('サーバーに接続しました', 'アプリを起動しています...')
+                    updateLoadingStatus(100)
                     resolve()
                 } else {
                     if (attempts < maxRetries && !resolved) {
@@ -236,11 +249,11 @@ app.whenReady().then(async () => {
 
     try {
         // Dockerコンテナを起動
-        updateLoadingStatus('Dockerコンテナを起動しています...', '')
+        updateLoadingStatus(10)
         await startDocker()
 
         // コンテナが起動した後、少し待つ（アプリケーションの初期化時間）
-        updateLoadingStatus('コンテナの初期化を待っています...', '')
+        // updateLoadingStatus('コンテナの初期化を待っています...', '')
         await new Promise(resolve => setTimeout(resolve, 3000))
 
         // コンテナのログを確認（デバッグ用、通常はコメントアウト）
@@ -261,18 +274,18 @@ app.whenReady().then(async () => {
         // checkContainerLogs(containerName)
 
         // ポート8000がリッスンしているか確認（最大4分待つ）
-        updateLoadingStatus('サーバーの起動を待っています...', 'モデルのロードに時間がかかる場合があります')
+        // updateLoadingStatus('サーバーの起動を待っています...', 'モデルのロードに時間がかかる場合があります')
         await checkPort(8000, 120, 2000) // 最大4分（120回 × 2秒）
 
         // メインウィンドウを表示
-        updateLoadingStatus('アプリを起動しています...', '')
+        updateLoadingStatus(100)
         setTimeout(() => {
             createMainWindow()
         }, 500)
 
     } catch (error) {
         console.error('Failed to start application:', error)
-        updateLoadingStatus('エラーが発生しました', error.message)
+        // updateLoadingStatus('エラーが発生しました', error.message)
 
         // エラー時はログを確認（必要に応じてコメントアウトを解除）
         // let containerName = 'wlk'

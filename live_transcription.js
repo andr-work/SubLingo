@@ -30,7 +30,7 @@ let availableMicrophones = [];
 let selectedMicrophoneId = null;
 let serverUseAudioWorklet = null;
 let configReadyResolve;
-const configReady = new Promise((r) => (configReadyResolve = r));
+let configReady = new Promise((r) => (configReadyResolve = r));
 let outputAudioContext = null;
 let audioSource = null;
 
@@ -40,7 +40,7 @@ if (waveCanvas && waveCtx) {
     waveCtx.scale(window.devicePixelRatio || 1, window.devicePixelRatio || 1);
 }
 
-const statusText = document.getElementById("status");
+const statusText = document.getElementById("status") || { set textContent(v) { console.log("[Status]", v); } };
 const recordButton = document.getElementById("recordButton");
 const chunkSelector = document.getElementById("chunkSelector");
 const websocketInput = document.getElementById("websocketInput");
@@ -48,16 +48,58 @@ const websocketDefaultSpan = document.getElementById("wsDefaultUrl");
 const linesTranscriptDiv = document.getElementById("transcript");
 const timerElement = document.querySelector(".timer");
 const themeRadios = document.querySelectorAll('input[name="theme"]');
-const microphoneSelect = document.getElementById("microphoneSelect");
+const microphoneList = document.getElementById("microphoneList");
 
-const settingsToggle = document.getElementById("settingsToggle");
-const settingsDiv = document.querySelector(".settings");
+const settingsBtn = document.getElementById("settingsBtn");
+const settingsPanel = document.getElementById("settingsPanel");
+
+if (settingsBtn && settingsPanel) {
+    settingsBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        settingsPanel.classList.toggle("hidden");
+    });
+
+    // Close when clicking outside
+    document.addEventListener("click", (e) => {
+        if (!settingsPanel.contains(e.target) && e.target !== settingsBtn) {
+            settingsPanel.classList.add("hidden");
+        }
+    });
+}
 
 const clearButton = document.getElementById("clearButton");
 if (clearButton) {
     clearButton.onclick = () => {
         const transcriptDiv = document.getElementById("transcript");
         transcriptDiv.innerHTML = '<div class="transcript-placeholder">文字起こしを開始すると、ここに結果が表示されます</div>';
+        // Cleanup lastSignature to force re-render if data comes in
+        lastSignature = null;
+    };
+}
+
+const downloadButton = document.getElementById("downloadButton");
+if (downloadButton) {
+    downloadButton.onclick = () => {
+        const transcriptDiv = document.getElementById("transcript");
+        const text = transcriptDiv.innerText; // Use innerText for div
+        if (!text || text.includes("文字起こしを開始すると")) {
+            alert("ダウンロードする内容がありません。");
+            return;
+        }
+
+        const blob = new Blob([text], { type: 'text/plain' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+
+        // Format date YYYYMMDD_HHMMSS
+        const now = new Date();
+        const msg = (n) => n.toString().padStart(2, '0');
+        const timestamp = `${now.getFullYear()}${msg(now.getMonth() + 1)}${msg(now.getDate())}_${msg(now.getHours())}${msg(now.getMinutes())}${msg(now.getSeconds())}`;
+        a.download = `transcript_${timestamp}.txt`;
+
+        a.click();
+        URL.revokeObjectURL(url);
     };
 }
 
@@ -136,7 +178,7 @@ async function enumerateMicrophones() {
         const devices = await navigator.mediaDevices.enumerateDevices();
         availableMicrophones = devices.filter(device => device.kind === 'audioinput');
 
-        populateMicrophoneSelect();
+        populateMicrophoneList();
         console.log(`Found ${availableMicrophones.length} microphone(s)`);
     } catch (error) {
         console.error('Error enumerating microphones:', error);
@@ -144,28 +186,36 @@ async function enumerateMicrophones() {
     }
 }
 
-function populateMicrophoneSelect() {
-    if (!microphoneSelect) return;
+function populateMicrophoneList() {
+    if (!microphoneList) return;
+    microphoneList.innerHTML = '';
 
-    microphoneSelect.innerHTML = '<option value="">Default Microphone</option>';
+    const createOption = (id, label) => {
+        const d = document.createElement('div');
+        d.className = 'dropdown-item';
+        if (id === selectedMicrophoneId) d.classList.add('active');
+        d.textContent = label;
+        d.onclick = (e) => {
+            e.stopPropagation(); // prevent menu closing immediately if necessary, though hover CSS handles it
+            handleMicrophoneSelect(id);
+        };
+        return d;
+    };
 
-    availableMicrophones.forEach((device, index) => {
-        const option = document.createElement('option');
-        option.value = device.deviceId;
-        option.textContent = device.label || `Microphone ${index + 1}`;
-        microphoneSelect.appendChild(option);
+    microphoneList.appendChild(createOption("", "Default Microphone"));
+    availableMicrophones.forEach((m, i) => {
+        microphoneList.appendChild(createOption(m.deviceId, m.label || `Microphone ${i + 1}`));
     });
 
-    const savedMicId = localStorage.getItem('selectedMicrophone');
-    if (savedMicId && availableMicrophones.some(mic => mic.deviceId === savedMicId)) {
-        microphoneSelect.value = savedMicId;
-        selectedMicrophoneId = savedMicId;
-    }
+    // Ensure active class is correct based on current selectedMicrophoneId
 }
 
-function handleMicrophoneChange() {
-    selectedMicrophoneId = microphoneSelect.value || null;
-    localStorage.setItem('selectedMicrophone', selectedMicrophoneId || '');
+function handleMicrophoneSelect(id) {
+    selectedMicrophoneId = id;
+    localStorage.setItem('selectedMicrophone', id || '');
+
+    // Re-render to update active class
+    populateMicrophoneList();
 
     const selectedDevice = availableMicrophones.find(mic => mic.deviceId === selectedMicrophoneId);
     const deviceName = selectedDevice ? selectedDevice.label : 'Default Microphone';
@@ -246,6 +296,11 @@ function setupWebSocket() {
         };
 
         websocket.onclose = () => {
+            // If strictly connecting (not yet resolved/rejected), reject.
+            if (isConnecting && websocket) {
+                reject(new Error("Connection closed before open"));
+            }
+
             if (userClosing) {
                 if (waitingForStop) {
                     statusText.textContent = "Processing finalized or connection closed.";
@@ -655,6 +710,8 @@ async function stopRecording() {
 
     userClosing = true;
     waitingForStop = true;
+    updateUI();
+
 
     if (websocket && websocket.readyState === WebSocket.OPEN) {
         const emptyBlob = new Blob([], { type: "audio/webm" });
@@ -729,54 +786,81 @@ async function stopRecording() {
     updateUI();
 }
 
+let isConnecting = false;
+
 async function toggleRecording() {
-    console.log("toggleRecording clicked! isRecording:", isRecording); // DEBUG
+    console.log("toggleRecording clicked! isRecording:", isRecording);
     if (!isRecording) {
-        if (waitingForStop) {
-            console.log("Waiting for stop, early return");
+        if (waitingForStop || isConnecting) {
             return;
         }
-        console.log("Connecting to WebSocket");
+
+        isConnecting = true;
+        updateUI();
+
         try {
-            if (websocket && websocket.readyState === WebSocket.OPEN) {
+            // Create a timeout that rejects after 5s
+            const timeoutPromise = new Promise((_, reject) =>
+                setTimeout(() => reject(new Error("Connection took too long (5s timeout)")), 5000)
+            );
+
+            // The connection task
+            const connectTask = async () => {
+                if (!websocket || websocket.readyState !== WebSocket.OPEN) {
+                    await setupWebSocket();
+                }
+                console.log("WebSocket connected, waiting for config...");
                 await configReady;
+                console.log("Config received, starting recording...");
                 await startRecording();
-            } else {
-                await setupWebSocket();
-                await configReady;
-                await startRecording();
-            }
+            };
+
+            // Race the task against timeout
+            await Promise.race([connectTask(), timeoutPromise]);
+
         } catch (err) {
-            statusText.textContent = "Could not connect to WebSocket or access mic. Aborted.";
-            console.error(err);
+            statusText.textContent = "Error: " + err.message;
+            console.error("Connection failed:", err);
+            isConnecting = false;
+            updateUI();
+        } finally {
+            if (isRecording) {
+                isConnecting = false;
+                // updateUI already called by startRecording
+                updateUI();
+            } else {
+                isConnecting = false;
+                updateUI();
+            }
         }
     } else {
-        console.log("Stopping recording");
         stopRecording();
     }
 }
 
 function updateUI() {
-    // console.log("updateUI called"); // DEBUG
-    recordButton.classList.toggle("recording", isRecording);
-    recordButton.disabled = waitingForStop;
+    const recordButton = document.getElementById("recordButton");
 
-    if (waitingForStop) {
-        if (statusText.textContent !== "Recording stopped. Processing final audio...") {
-            statusText.textContent = "Please wait for processing to complete...";
+    if (recordButton) {
+        recordButton.classList.toggle("recording", isRecording);
+        recordButton.disabled = waitingForStop;
+
+        const spanText = recordButton.querySelector(".button-text");
+        const spanIcon = recordButton.querySelector(".button-icon");
+
+        if (waitingForStop) {
+            // Stopping State
+            if (spanText) spanText.textContent = "停止中...";
+            if (spanIcon) spanIcon.textContent = "⏳";
+        } else if (isRecording) {
+            // Stop State
+            if (spanText) spanText.textContent = "停止";
+            if (spanIcon) spanIcon.textContent = "⏹";
+        } else {
+            // Start State
+            if (spanText) spanText.textContent = "開始";
+            if (spanIcon) spanIcon.textContent = "🎤";
         }
-    } else if (isRecording) {
-        statusText.textContent = "";
-    } else {
-        if (
-            statusText.textContent !== "Finished processing audio! Ready to record again." &&
-            statusText.textContent !== "Processing finalized or connection closed."
-        ) {
-            statusText.textContent = "Click to start transcription";
-        }
-    }
-    if (!waitingForStop) {
-        recordButton.disabled = false;
     }
 }
 
@@ -787,9 +871,7 @@ if (recordButton) {
     console.error("Critical: recordButton not found in DOM!");
 }
 
-if (microphoneSelect) {
-    microphoneSelect.addEventListener("change", handleMicrophoneChange);
-}
+
 document.addEventListener('DOMContentLoaded', async () => {
     try {
         await enumerateMicrophones();
@@ -807,12 +889,7 @@ navigator.mediaDevices.addEventListener('devicechange', async () => {
 });
 
 
-if (settingsToggle && settingsDiv) {
-    settingsToggle.addEventListener("click", () => {
-        settingsDiv.classList.toggle("visible");
-        settingsToggle.classList.toggle("active");
-    });
-}
+
 
 if (isExtension) {
     async function checkAndRequestPermissions() {
