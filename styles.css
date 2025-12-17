@@ -8,23 +8,24 @@ body {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
     background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
     color: #333;
-    min-height: 100vh;
-    padding: 20px;
+    height: 100vh;
+    padding: 0;
+    overflow: hidden;
 }
 
 .container {
-    max-width: 900px;
-    margin: 0 auto;
     background: white;
-    border-radius: 20px;
     box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
     overflow: hidden;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
 }
 
 .header {
     background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
     color: white;
-    padding: 20px 30px;
+    padding: 20px 60px 20px 30px;
     display: flex;
     justify-content: space-between;
     align-items: center;
@@ -113,7 +114,7 @@ body {
     left: 0;
     background: white;
     color: #333;
-    min-width: 200px;
+    min-width: 150px;
     border-radius: 6px;
     box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
     z-index: 1000;
@@ -130,6 +131,9 @@ body {
     cursor: pointer;
     transition: background 0.2s;
     font-size: 0.9em;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
 }
 
 .dropdown-item:hover {
@@ -141,6 +145,13 @@ body {
     background: #e3f2fd;
     color: #1976d2;
     font-weight: 600;
+}
+
+.dropdown-item.active::after {
+    content: '✓';
+    font-weight: bold;
+    color: #1976d2;
+    margin-left: 8px;
 }
 
 .header h1 {
@@ -193,11 +204,17 @@ body {
     animation: pulse 2s infinite;
 }
 
+.main-content {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
 .fullscreen-editor {
     display: flex;
     flex-direction: column;
-    height: calc(100vh - 100px);
-    /* Adjust based on header height */
+    flex: 1;
     padding: 20px;
     background: white;
 }
@@ -322,10 +339,10 @@ body {
 .transcript-container {
     padding: 30px;
     background: white;
-    min-height: 400px;
-    max-height: 600px;
     display: flex;
     flex-direction: column;
+    flex: 1;
+    overflow: hidden;
 }
 
 .transcript-header {

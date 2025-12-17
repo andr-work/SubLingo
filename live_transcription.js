@@ -28,6 +28,7 @@ let lastReceivedData = null;
 let lastSignature = null;
 let availableMicrophones = [];
 let selectedMicrophoneId = null;
+let selectedModel = 'small';
 let serverUseAudioWorklet = null;
 let configReadyResolve;
 let configReady = new Promise((r) => (configReadyResolve = r));
@@ -49,6 +50,7 @@ const linesTranscriptDiv = document.getElementById("transcript");
 const timerElement = document.querySelector(".timer");
 const themeRadios = document.querySelectorAll('input[name="theme"]');
 const microphoneList = document.getElementById("microphoneList");
+const modelList = document.getElementById("modelList");
 
 const settingsBtn = document.getElementById("settingsBtn");
 const settingsPanel = document.getElementById("settingsPanel");
@@ -178,6 +180,10 @@ async function enumerateMicrophones() {
         const devices = await navigator.mediaDevices.enumerateDevices();
         availableMicrophones = devices.filter(device => device.kind === 'audioinput');
 
+        // Load saved microphone selection or default to empty string
+        const savedMic = localStorage.getItem('selectedMicrophone');
+        selectedMicrophoneId = savedMic !== null ? savedMic : '';
+
         populateMicrophoneList();
         console.log(`Found ${availableMicrophones.length} microphone(s)`);
     } catch (error) {
@@ -231,6 +237,41 @@ function handleMicrophoneSelect(id) {
             }, 1000);
         });
     }
+}
+
+function populateModelList() {
+    console.log('populateModelList called, modelList element:', modelList);
+    if (!modelList) return;
+
+    const models = ['small', 'medium', 'large'];
+    const modelLabels = { 'small': 'Small', 'medium': 'Medium', 'large': 'Large' };
+
+    modelList.innerHTML = '';
+
+    models.forEach(model => {
+        const d = document.createElement('div');
+        d.className = 'dropdown-item';
+        if (model === selectedModel) d.classList.add('active');
+        d.textContent = modelLabels[model];
+        d.onclick = (e) => {
+            e.stopPropagation();
+            handleModelSelect(model);
+        };
+        modelList.appendChild(d);
+        console.log(`Added model: ${model}, active: ${model === selectedModel}`);
+    });
+    console.log('Model list populated, selectedModel:', selectedModel);
+}
+
+function handleModelSelect(model) {
+    selectedModel = model;
+    localStorage.setItem('selectedModel', model);
+
+    // Re-render to update active class
+    populateModelList();
+
+    console.log(`Selected model: ${model}`);
+    statusText.textContent = `Model changed to: ${model}`;
 }
 
 // Helpers
@@ -872,13 +913,29 @@ if (recordButton) {
 }
 
 
-document.addEventListener('DOMContentLoaded', async () => {
-    try {
-        await enumerateMicrophones();
-    } catch (error) {
+// Initialize function
+function initializeDropdowns() {
+    // Initialize model selection
+    const savedModel = localStorage.getItem('selectedModel');
+    selectedModel = savedModel || 'small';
+    populateModelList();
+
+    // Initialize microphone list
+    enumerateMicrophones().catch(error => {
         console.log("Could not enumerate microphones on load:", error);
-    }
-});
+    });
+}
+
+// Run on DOMContentLoaded
+document.addEventListener('DOMContentLoaded', initializeDropdowns);
+
+// Also run immediately if DOM is already loaded (Electron context)
+if (document.readyState === 'loading') {
+    // Still loading, wait for DOMContentLoaded
+} else {
+    // DOM already loaded, run immediately
+    initializeDropdowns();
+}
 navigator.mediaDevices.addEventListener('devicechange', async () => {
     console.log('Device change detected, re-enumerating microphones');
     try {
