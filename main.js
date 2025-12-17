@@ -1,4 +1,4 @@
-const { app, BrowserWindow, session, shell } = require('electron')
+const { app, BrowserWindow, session, shell, desktopCapturer, ipcMain } = require('electron')
 const { spawn } = require('child_process')
 const { execSync } = require('child_process')
 const http = require('http')
@@ -32,7 +32,8 @@ const createMainWindow = () => {
         height: 800,
         webPreferences: {
             nodeIntegration: false,
-            contextIsolation: true
+            contextIsolation: true,
+            preload: path.join(__dirname, 'preload.js')
         }
     })
 
@@ -243,6 +244,18 @@ app.whenReady().then(async () => {
             }
         }
     )
+
+    // IPC handler for desktop sources (system audio capture)
+    ipcMain.handle('get-desktop-sources', async () => {
+        const sources = await desktopCapturer.getSources({
+            types: ['screen', 'window']
+        });
+        return sources.map(source => ({
+            id: source.id,
+            name: source.name,
+            thumbnail: source.thumbnail.toDataURL()
+        }));
+    })
 
     // ローディングウィンドウを表示
     createLoadingWindow()

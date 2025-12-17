@@ -29,6 +29,7 @@ let lastSignature = null;
 let availableMicrophones = [];
 let selectedMicrophoneId = null;
 let selectedModel = 'small';
+let selectedInputSource = 'microphone'; // 'microphone', 'system', 'both'
 let serverUseAudioWorklet = null;
 let configReadyResolve;
 let configReady = new Promise((r) => (configReadyResolve = r));
@@ -51,6 +52,7 @@ const timerElement = document.querySelector(".timer");
 const themeRadios = document.querySelectorAll('input[name="theme"]');
 const microphoneList = document.getElementById("microphoneList");
 const modelList = document.getElementById("modelList");
+const inputSourceList = document.getElementById("inputSourceList");
 
 const settingsBtn = document.getElementById("settingsBtn");
 const settingsPanel = document.getElementById("settingsPanel");
@@ -272,6 +274,112 @@ function handleModelSelect(model) {
 
     console.log(`Selected model: ${model}`);
     statusText.textContent = `Model changed to: ${model}`;
+}
+
+// Input source selection functions
+function populateInputSourceList() {
+    if (!inputSourceList) return;
+
+    const sources = [
+        { id: 'microphone', label: 'マイクのみ' },
+        { id: 'system', label: 'システム音声のみ' },
+        { id: 'both', label: 'マイク + システム音声' }
+    ];
+
+    inputSourceList.innerHTML = '';
+
+    sources.forEach(source => {
+        const d = document.createElement('div');
+        d.className = 'dropdown-item';
+        if (source.id === selectedInputSource) d.classList.add('active');
+        d.textContent = source.label;
+        d.onclick = (e) => {
+            e.stopPropagation();
+            handleInputSourceSelect(source.id);
+        };
+        inputSourceList.appendChild(d);
+    });
+}
+
+function handleInputSourceSelect(source) {
+    selectedInputSource = source;
+    localStorage.setItem('selectedInputSource', source);
+
+    // Re-render to update active class
+    populateInputSourceList();
+
+    const labels = { 'microphone': 'マイクのみ', 'system': 'システム音声のみ', 'both': 'マイク + システム音声' };
+    console.log(`Selected input source: ${source}`);
+    statusText.textContent = `入力ソースを変更: ${labels[source]}`;
+
+    if (isRecording) {
+        statusText.textContent = "入力ソースを切り替え中...";
+        stopRecording().then(() => {
+            setTimeout(() => {
+                toggleRecording();
+            }, 1000);
+        });
+    }
+}
+
+// Get system audio stream using desktopCapturer
+async function getSystemAudioStream() {
+    try {
+        // Check if electronAPI is available (running in Electron)
+        if (typeof window.electronAPI === 'undefined') {
+            console.log('electronAPI not available, falling back to getDisplayMedia');
+            // Fallback to standard getDisplayMedia for non-Electron contexts
+            const stream = await navigator.mediaDevices.getDisplayMedia({
+                audio: true,
+                video: { width: 1, height: 1 } // Minimal video to satisfy the API
+            });
+            // Stop video track immediately since we only need audio
+            stream.getVideoTracks().forEach(track => track.stop());
+            return stream;
+        }
+
+        // Get desktop sources from Electron
+        const sources = await window.electronAPI.getDesktopSources();
+        console.log('Available desktop sources:', sources);
+
+        if (sources.length === 0) {
+            throw new Error('No desktop sources available');
+        }
+
+        // Use the first screen source for system audio
+        const screenSource = sources.find(s => s.name === 'Entire Screen' || s.name.includes('Screen') || s.name.includes('画面'));
+        const sourceId = screenSource ? screenSource.id : sources[0].id;
+
+        console.log('Using source:', sourceId);
+
+        // Get stream with desktop audio
+        const stream = await navigator.mediaDevices.getUserMedia({
+            audio: {
+                mandatory: {
+                    chromeMediaSource: 'desktop',
+                    chromeMediaSourceId: sourceId
+                }
+            },
+            video: {
+                mandatory: {
+                    chromeMediaSource: 'desktop',
+                    chromeMediaSourceId: sourceId,
+                    minWidth: 1,
+                    maxWidth: 1,
+                    minHeight: 1,
+                    maxHeight: 1
+                }
+            }
+        });
+
+        // Stop video track immediately since we only need audio
+        stream.getVideoTracks().forEach(track => track.stop());
+
+        return stream;
+    } catch (error) {
+        console.error('Error getting system audio stream:', error);
+        throw error;
+    }
 }
 
 // Helpers
@@ -661,10 +769,73 @@ async function startRecording() {
                 statusText.textContent = "Using microphone audio.";
             }
         } else if (isWebContext) {
-            const audioConstraints = selectedMicrophoneId
-                ? { audio: { deviceId: { exact: selectedMicrophoneId } } }
-                : { audio: true };
-            stream = await navigator.mediaDevices.getUserMedia(audioConstraints);
+            // Handle different input sources based on user selection
+            if (selectedInputSource === 'microphone') {
+                // Microphone only
+                const audioConstraints = selectedMicrophoneId
+                    ? { audio: { deviceId: { exact: selectedMicrophoneId } } }
+                    : { audio: true };
+                stream = await navigator.mediaDevices.getUserMedia(audioConstraints);
+                statusText.textContent = "マイクを使用中...";
+            } else if (selectedInputSource === 'system') {
+                // System audio only
+                try {
+                    stream = await getSystemAudioStream();
+                    statusText.textContent = "システム音声を使用中...";
+                } catch (err) {
+                    console.error('Failed to get system audio, falling back to microphone:', err);
+                    statusText.textContent = "システム音声の取得に失敗。マイクを使用します。";
+                    const audioConstraints = selectedMicrophoneId
+                        ? { audio: { deviceId: { exact: selectedMicrophoneId } } }
+                        : { audio: true };
+                    stream = await navigator.mediaDevices.getUserMedia(audioConstraints);
+                }
+            } else if (selectedInputSource === 'both') {
+                // Both microphone and system audio - merge streams
+                try {
+                    const micConstraints = selectedMicrophoneId
+                        ? { audio: { deviceId: { exact: selectedMicrophoneId } } }
+                        : { audio: true };
+                    const micStream = await navigator.mediaDevices.getUserMedia(micConstraints);
+
+                    let systemStream;
+                    try {
+                        systemStream = await getSystemAudioStream();
+                    } catch (err) {
+                        console.warn('Could not get system audio, using microphone only:', err);
+                        stream = micStream;
+                        statusText.textContent = "システム音声取得失敗。マイクのみ使用中...";
+                    }
+
+                    if (systemStream) {
+                        // Merge both streams using Web Audio API
+                        const mergeContext = new (window.AudioContext || window.webkitAudioContext)();
+                        const destination = mergeContext.createMediaStreamDestination();
+
+                        const micSource = mergeContext.createMediaStreamSource(micStream);
+                        const systemSource = mergeContext.createMediaStreamSource(systemStream);
+
+                        micSource.connect(destination);
+                        systemSource.connect(destination);
+
+                        stream = destination.stream;
+                        statusText.textContent = "マイク + システム音声を使用中...";
+
+                        // Store references for cleanup
+                        audioContext = mergeContext;
+                    }
+                } catch (err) {
+                    console.error('Failed to setup combined audio:', err);
+                    statusText.textContent = "音声取得に失敗しました。";
+                    throw err;
+                }
+            } else {
+                // Default to microphone
+                const audioConstraints = selectedMicrophoneId
+                    ? { audio: { deviceId: { exact: selectedMicrophoneId } } }
+                    : { audio: true };
+                stream = await navigator.mediaDevices.getUserMedia(audioConstraints);
+            }
         }
 
         audioContext = new (window.AudioContext || window.webkitAudioContext)();
@@ -915,6 +1086,11 @@ if (recordButton) {
 
 // Initialize function
 function initializeDropdowns() {
+    // Initialize input source selection
+    const savedInputSource = localStorage.getItem('selectedInputSource');
+    selectedInputSource = savedInputSource || 'microphone';
+    populateInputSourceList();
+
     // Initialize model selection
     const savedModel = localStorage.getItem('selectedModel');
     selectedModel = savedModel || 'small';
